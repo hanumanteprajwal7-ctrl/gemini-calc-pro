@@ -1,0 +1,8 @@
+{
+  "name": "Gemini Calc-Pro",
+  "description": "A sophisticated calculator with an integrated AI assistant powered by Gemini to explain complex expressions and solve math word problems.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
