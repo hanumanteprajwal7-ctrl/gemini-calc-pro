@@ -20,6 +20,145 @@ interface AiAssistantProps {
   initialPrompt?: string;
 }
 
+/**
+ * Convert common AI mathematical formatting into clean readable text.
+ */
+const cleanMathText = (text: string): string => {
+  if (!text) return '';
+
+  let cleaned = text;
+
+  // Markdown emphasis
+  cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, '$1');
+  cleaned = cleaned.replace(/__(.*?)__/g, '$1');
+
+  // LaTeX fractions
+  cleaned = cleaned.replace(
+    /\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g,
+    '$1/$2'
+  );
+
+  // Square roots
+  cleaned = cleaned.replace(
+    /\\sqrt\s*\{([^{}]*)\}/g,
+    'sqrt($1)'
+  );
+
+  // Common LaTeX symbols
+  cleaned = cleaned.replace(/\\times/g, ' × ');
+  cleaned = cleaned.replace(/\\cdot/g, ' × ');
+  cleaned = cleaned.replace(/\\pm/g, ' ± ');
+  cleaned = cleaned.replace(/\\leq/g, ' ≤ ');
+  cleaned = cleaned.replace(/\\geq/g, ' ≥ ');
+  cleaned = cleaned.replace(/\\neq/g, ' ≠ ');
+  cleaned = cleaned.replace(/\\infty/g, '∞ ');
+
+  // Remove math delimiters
+  cleaned = cleaned.replace(/\$\$/g, '');
+  cleaned = cleaned.replace(/\$/g, '');
+
+  // Text commands
+  cleaned = cleaned.replace(
+    /\\text\s*\{([^{}]*)\}/g,
+    '$1'
+  );
+
+  cleaned = cleaned.replace(
+    /\\mathrm\s*\{([^{}]*)\}/g,
+    '$1'
+  );
+
+  cleaned = cleaned.replace(
+    /\\mathbf\s*\{([^{}]*)\}/g,
+    '$1'
+  );
+
+  // Remove simple remaining LaTeX commands
+  cleaned = cleaned.replace(
+    /\\([a-zA-Z]+)/g,
+    '$1'
+  );
+
+  // Remove unnecessary braces
+  cleaned = cleaned.replace(/[{}]/g, '');
+
+  // Remove Markdown headings
+  cleaned = cleaned.replace(/^#+\s*/gm, '');
+
+  // Normalize whitespace
+  cleaned = cleaned.replace(/[ \t]+/g, ' ');
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+
+  return cleaned.trim();
+};
+
+/**
+ * Clean a step returned by the AI.
+ *
+ * This removes accidental numbering such as:
+ * "1"
+ * "2."
+ * "Step 3:"
+ *
+ * because the UI already provides the step number.
+ */
+const cleanStep = (step: string): string => {
+  if (!step) return '';
+
+  let cleaned = cleanMathText(step);
+
+  cleaned = cleaned.replace(
+    /^step\s*\d+\s*[:.)-]?\s*/i,
+    ''
+  );
+
+  cleaned = cleaned.replace(
+    /^\d+\s*[:.)-]\s*/,
+    ''
+  );
+
+  cleaned = cleaned.replace(
+    /^\d+\s*$/,
+    ''
+  );
+
+  return cleaned.trim();
+};
+
+/**
+ * Ensure the solver always has usable steps.
+ */
+const normalizeSteps = (
+  steps: unknown,
+  problem: string
+): string[] => {
+  if (!Array.isArray(steps)) {
+    return [
+      `Identify the given mathematical problem: ${problem}`,
+      'Apply the appropriate mathematical method or formula.',
+      'Simplify the resulting expression.',
+      'Verify the result.',
+    ];
+  }
+
+  const cleaned = steps
+    .map((step) =>
+      typeof step === 'string'
+        ? cleanStep(step)
+        : ''
+    )
+    .filter(Boolean);
+
+  return cleaned.length > 0
+    ? cleaned
+    : [
+        `Identify the given mathematical problem: ${problem}`,
+        'Apply the appropriate mathematical method or formula.',
+        'Simplify the resulting expression.',
+        'Verify the result.',
+      ];
+};
+
 export const AiAssistant: React.FC<AiAssistantProps> = ({
   currentDisplay,
   history,
@@ -27,53 +166,71 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
   onUpdateSolverHistory,
   initialPrompt,
 }) => {
-  const [loading, setLoading] = useState(false);
-  const [loadingStep, setLoadingStep] = useState('Analyzing problem...');
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [loading, setLoading] =
+    useState(false);
+
+  const [loadingStep, setLoadingStep] =
+    useState('Analyzing problem...');
+
+  const [errorMessage, setErrorMessage] =
+    useState<string | null>(null);
 
   const [explanation, setExplanation] =
     useState<AiExplanation | null>(null);
 
-  const [problemInput, setProblemInput] = useState('');
-  const [followUpInput, setFollowUpInput] = useState('');
+  const [problemInput, setProblemInput] =
+    useState('');
+
+  const [followUpInput, setFollowUpInput] =
+    useState('');
 
   const [solution, setSolution] =
     useState<SolverResult | null>(null);
 
   const [activeTab, setActiveTab] =
-    useState<'solve' | 'explain' | 'history'>('solve');
+    useState<'solve' | 'explain' | 'history'>(
+      'solve'
+    );
 
-  const [copied, setCopied] = useState(false);
-  const [filterStarred, setFilterStarred] = useState(false);
+  const [copied, setCopied] =
+    useState(false);
+
+  const [filterStarred, setFilterStarred] =
+    useState(false);
 
   /*
    * ---------------------------------------------------------
    * RESTORE LAST SOLUTION
    * ---------------------------------------------------------
-   *
-   * This is important.
-   *
-   * If the parent component updates solverHistory and
-   * AiAssistant gets recreated, the local `solution` state
-   * can become null.
-   *
-   * We therefore restore the latest solution from history.
    */
+
   useEffect(() => {
-    if (!solution && solverHistory.length > 0) {
+    if (
+      !solution &&
+      solverHistory.length > 0
+    ) {
       const latest = solverHistory[0];
 
       setProblemInput(latest.problem);
 
       setSolution({
         problemStatement:
-          latest.problemStatement || latest.problem,
+          latest.problemStatement ||
+          latest.problem,
+
         method:
-          latest.method || 'Mathematical Analysis',
-        steps:
-          latest.steps || [],
+          latest.method ||
+          'Mathematical Analysis',
+
+        steps: normalizeSteps(
+          latest.steps,
+          latest.problem
+        ),
+
         answer:
-          latest.answer,
+          latest.answer ||
+          'No answer returned.',
+
         explanation:
           latest.explanation || '',
       });
@@ -87,9 +244,14 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
    * INITIAL PROMPT
    * ---------------------------------------------------------
    */
+
   useEffect(() => {
-    if (initialPrompt && initialPrompt.trim()) {
-      const prompt = initialPrompt.trim();
+    if (
+      initialPrompt &&
+      initialPrompt.trim()
+    ) {
+      const prompt =
+        initialPrompt.trim();
 
       setProblemInput(prompt);
       setActiveTab('solve');
@@ -100,14 +262,19 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
 
   /*
    * ---------------------------------------------------------
-   * LOADING TEXT
+   * LOADING STATUS
    * ---------------------------------------------------------
    */
+
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer:
+      | ReturnType<typeof setTimeout>
+      | undefined;
 
     if (loading) {
-      setLoadingStep('Analyzing mathematical notation...');
+      setLoadingStep(
+        'Analyzing mathematical notation...'
+      );
 
       timer = setTimeout(() => {
         setLoadingStep(
@@ -117,7 +284,9 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
     }
 
     return () => {
-      if (timer) clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+      }
     };
   }, [loading]);
 
@@ -126,6 +295,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
    * QUICK PROMPTS
    * ---------------------------------------------------------
    */
+
   const quickPrompts = [
     {
       label: 'Quadratic',
@@ -158,8 +328,11 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
    * EXPLAIN CALCULATOR RESULT
    * ---------------------------------------------------------
    */
+
   const handleExplain = async () => {
-    if (history.length === 0) return;
+    if (history.length === 0) {
+      return;
+    }
 
     setLoading(true);
     setErrorMessage(null);
@@ -168,10 +341,11 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
     try {
       const last = history[0];
 
-      const result = await explainCalculation(
-        last.expression,
-        last.result
-      );
+      const result =
+        await explainCalculation(
+          last.expression,
+          last.result
+        );
 
       setExplanation(result);
     } catch (_err) {
@@ -179,6 +353,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
 
       setExplanation({
         explanation: `The calculation ${last.expression} evaluates to ${last.result}.`,
+
         steps: [
           `Parsed expression: ${last.expression}`,
           'Applied standard mathematical rules and operator precedence.',
@@ -192,9 +367,53 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
 
   /*
    * ---------------------------------------------------------
+   * SAVE SOLUTION TO HISTORY
+   * ---------------------------------------------------------
+   */
+
+  const saveSolutionToHistory = (
+    problem: string,
+    result: SolverResult
+  ) => {
+    const newItem: SolverHistoryItem = {
+      id: Math.random()
+        .toString(36)
+        .substring(2, 11),
+
+      problem,
+
+      problemStatement:
+        result.problemStatement,
+
+      method:
+        result.method,
+
+      steps:
+        result.steps,
+
+      answer:
+        result.answer,
+
+      explanation:
+        result.explanation,
+
+      timestamp: Date.now(),
+
+      isStarred: false,
+    };
+
+    onUpdateSolverHistory([
+      newItem,
+      ...solverHistory,
+    ].slice(0, 50));
+  };
+
+  /*
+   * ---------------------------------------------------------
    * SOLVE PROBLEM
    * ---------------------------------------------------------
    */
+
   const handleSolve = async (
     overridePrompt?: string,
     contextStr?: string
@@ -205,7 +424,9 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
         : problemInput
     ).trim();
 
-    if (!textToSolve) return;
+    if (!textToSolve) {
+      return;
+    }
 
     setProblemInput(textToSolve);
     setLoading(true);
@@ -215,82 +436,57 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
 
     try {
       /*
-       * Ask backend / AI service.
+       * Primary AI solver
        */
-      const result = await solveMathProblem(
-        textToSolve,
-        contextStr
-      );
+      const result =
+        await solveMathProblem(
+          textToSolve,
+          contextStr
+        );
 
-      /*
-       * Make sure the result is valid before displaying it.
-       */
       const safeResult: SolverResult = {
         problemStatement:
-          result.problemStatement || textToSolve,
+          result?.problemStatement ||
+          textToSolve,
 
         method:
-          result.method || 'Mathematical Analysis',
+          result?.method ||
+          'Mathematical Analysis',
 
-        steps:
-          Array.isArray(result.steps)
-            ? result.steps
-            : [],
+        steps: normalizeSteps(
+          result?.steps,
+          textToSolve
+        ),
 
         answer:
-          result.answer || 'No answer returned.',
+          result?.answer ||
+          'No answer returned.',
 
         explanation:
-          result.explanation || '',
+          result?.explanation || '',
       };
 
       /*
-       * IMPORTANT:
-       * Show the answer immediately in the Solver tab.
+       * DISPLAY RESULT IMMEDIATELY
        */
       setSolution(safeResult);
       setActiveTab('solve');
 
       /*
-       * Save to history as well.
+       * SAVE RESULT
        */
-      const newItem: SolverHistoryItem = {
-        id: Math.random()
-          .toString(36)
-          .substring(2, 11),
-
-        problem: textToSolve,
-
-        problemStatement:
-          safeResult.problemStatement,
-
-        method:
-          safeResult.method,
-
-        steps:
-          safeResult.steps,
-
-        answer:
-          safeResult.answer,
-
-        explanation:
-          safeResult.explanation,
-
-        timestamp: Date.now(),
-
-        isStarred: false,
-      };
-
-      onUpdateSolverHistory([
-        newItem,
-        ...solverHistory,
-      ].slice(0, 50));
+      saveSolutionToHistory(
+        textToSolve,
+        safeResult
+      );
 
       setFollowUpInput('');
     } catch (err) {
       /*
-       * If AI/backend fails, use local math engine.
+       * AI failed.
+       * Try local mathematical engine.
        */
+
       console.warn(
         'AI solver failed. Using client-side solver.',
         err
@@ -302,63 +498,40 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
 
         const safeFallback: SolverResult = {
           problemStatement:
-            fallbackResult.problemStatement ||
+            fallbackResult?.problemStatement ||
             textToSolve,
 
           method:
-            fallbackResult.method ||
+            fallbackResult?.method ||
             'Client-Side Mathematical Solver',
 
-          steps:
-            Array.isArray(fallbackResult.steps)
-              ? fallbackResult.steps
-              : [],
+          steps: normalizeSteps(
+            fallbackResult?.steps,
+            textToSolve
+          ),
 
           answer:
-            fallbackResult.answer ||
+            fallbackResult?.answer ||
             'No answer available.',
 
           explanation:
-            fallbackResult.explanation || '',
+            fallbackResult?.explanation ||
+            '',
         };
 
         /*
-         * Show fallback result immediately.
+         * DISPLAY FALLBACK RESULT
          */
         setSolution(safeFallback);
         setActiveTab('solve');
 
-        const newItem: SolverHistoryItem = {
-          id: Math.random()
-            .toString(36)
-            .substring(2, 11),
-
-          problem: textToSolve,
-
-          problemStatement:
-            safeFallback.problemStatement,
-
-          method:
-            safeFallback.method,
-
-          steps:
-            safeFallback.steps,
-
-          answer:
-            safeFallback.answer,
-
-          explanation:
-            safeFallback.explanation,
-
-          timestamp: Date.now(),
-
-          isStarred: false,
-        };
-
-        onUpdateSolverHistory([
-          newItem,
-          ...solverHistory,
-        ].slice(0, 50));
+        /*
+         * SAVE FALLBACK RESULT
+         */
+        saveSolutionToHistory(
+          textToSolve,
+          safeFallback
+        );
 
         setFollowUpInput('');
       } catch (fallbackError) {
@@ -381,9 +554,12 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
    * CANCEL
    * ---------------------------------------------------------
    */
+
   const handleCancelLoading = () => {
     setLoading(false);
-    setErrorMessage('Operation was cancelled.');
+    setErrorMessage(
+      'Operation was cancelled.'
+    );
   };
 
   /*
@@ -391,6 +567,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
    * FOLLOW-UP QUESTION
    * ---------------------------------------------------------
    */
+
   const handleFollowUp = async (
     e: React.FormEvent
   ) => {
@@ -404,7 +581,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
       return;
     }
 
-    const question = followUpInput.trim();
+    const question =
+      followUpInput.trim();
 
     const context = `
 You are explaining a mathematical solution.
@@ -427,7 +605,7 @@ ${solution.explanation}
 User's question:
 ${question}
 
-Answer the user's question specifically about this solution.
+Answer specifically about this solution.
 
 Do not solve a different problem.
 
@@ -438,19 +616,32 @@ Explain clearly and simply.
     setErrorMessage(null);
 
     try {
-      const answer = await solveMathProblem(
-        question,
-        context
-      );
+      const answer =
+        await solveMathProblem(
+          question,
+          context
+        );
 
       setSolution((previous) => {
-        if (!previous) return previous;
+        if (!previous) {
+          return previous;
+        }
 
         return {
           ...previous,
+
           explanation:
-            answer.explanation ||
+            answer?.explanation ||
             previous.explanation,
+
+          steps:
+            answer?.steps &&
+            answer.steps.length > 0
+              ? normalizeSteps(
+                  answer.steps,
+                  problemInput
+                )
+              : previous.steps,
         };
       });
 
@@ -469,6 +660,7 @@ Explain clearly and simply.
    * STAR
    * ---------------------------------------------------------
    */
+
   const toggleStar = (
     id: string,
     e: React.MouseEvent
@@ -480,7 +672,8 @@ Explain clearly and simply.
         item.id === id
           ? {
               ...item,
-              isStarred: !item.isStarred,
+              isStarred:
+                !item.isStarred,
             }
           : item
       )
@@ -492,6 +685,7 @@ Explain clearly and simply.
    * DELETE
    * ---------------------------------------------------------
    */
+
   const deleteItem = (
     id: string,
     e: React.MouseEvent
@@ -510,6 +704,7 @@ Explain clearly and simply.
    * LOAD HISTORY
    * ---------------------------------------------------------
    */
+
   const loadHistoryItem = (
     item: SolverHistoryItem
   ) => {
@@ -524,15 +719,17 @@ Explain clearly and simply.
         item.method ||
         'Standard Method',
 
-      steps:
-        item.steps ||
-        ['Direct evaluation'],
+      steps: normalizeSteps(
+        item.steps,
+        item.problem
+      ),
 
       answer:
-        item.answer,
+        item.answer ||
+        'No answer available.',
 
       explanation:
-        item.explanation,
+        item.explanation || '',
     });
 
     setExplanation(null);
@@ -544,11 +741,14 @@ Explain clearly and simply.
    * COPY
    * ---------------------------------------------------------
    */
+
   const copyToClipboard = async (
     text: string
   ) => {
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(
+        text
+      );
 
       setCopied(true);
 
@@ -567,21 +767,25 @@ Explain clearly and simply.
    * FILTER HISTORY
    * ---------------------------------------------------------
    */
-  const displayedHistory = filterStarred
-    ? solverHistory.filter(
-        (item) => item.isStarred
-      )
-    : solverHistory;
+
+  const displayedHistory =
+    filterStarred
+      ? solverHistory.filter(
+          (item) => item.isStarred
+        )
+      : solverHistory;
 
   /*
-   * =========================================================
+   * ---------------------------------------------------------
    * UI
-   * =========================================================
+   * ---------------------------------------------------------
    */
+
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] p-6 md:p-8 shadow-2xl h-full flex flex-col min-h-[620px] transition-all">
 
       {/* HEADER */}
+
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
 
@@ -603,6 +807,7 @@ Explain clearly and simply.
       </div>
 
       {/* TABS */}
+
       <div className="flex bg-slate-950/60 p-1 rounded-2xl mb-6 border border-slate-800/50">
 
         <button
@@ -650,15 +855,18 @@ Explain clearly and simply.
       </div>
 
       {/* CONTENT */}
+
       <div className="flex-1 flex flex-col overflow-y-auto pr-1 custom-scrollbar">
 
-        {/* ===================================================
+        {/* =================================================
             SOLVER TAB
-        =================================================== */}
+        ================================================= */}
+
         {activeTab === 'solve' && (
           <div className="flex flex-col gap-6 animate-in fade-in duration-300">
 
             {/* INPUT */}
+
             <div className="flex flex-col gap-3">
 
               <div className="flex items-center justify-between">
@@ -683,13 +891,16 @@ Explain clearly and simply.
               <textarea
                 value={problemInput}
                 onChange={(e) =>
-                  setProblemInput(e.target.value)
+                  setProblemInput(
+                    e.target.value
+                  )
                 }
                 placeholder="E.g. Solve 2x^2 + 5x - 3 = 0"
                 className="bg-slate-950 border border-slate-800 rounded-2xl p-4 md:p-5 text-sm md:text-base text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 resize-none h-28 shadow-inner transition-all placeholder:text-slate-600 font-sans"
               />
 
-              {/* QUICK BUTTONS */}
+              {/* QUICK PROMPTS */}
+
               <div className="flex items-center gap-1.5 flex-wrap">
 
                 <span className="text-[10px] uppercase font-bold text-slate-600 mr-1">
@@ -719,6 +930,7 @@ Explain clearly and simply.
               </div>
 
               {/* SOLVE BUTTON */}
+
               <button
                 onClick={() =>
                   handleSolve()
@@ -733,6 +945,7 @@ Explain clearly and simply.
                 {loading ? (
                   <>
                     <i className="fas fa-spinner fa-spin"></i>
+
                     <span>
                       Solving step-by-step...
                     </span>
@@ -740,6 +953,7 @@ Explain clearly and simply.
                 ) : (
                   <>
                     <i className="fas fa-magic"></i>
+
                     <span>
                       Solve Step-by-Step
                     </span>
@@ -751,14 +965,18 @@ Explain clearly and simply.
             </div>
 
             {/* ERROR */}
+
             {errorMessage && (
               <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center justify-between">
 
                 <div className="flex items-center gap-2">
+
                   <i className="fas fa-exclamation-circle"></i>
+
                   <span>
                     {errorMessage}
                   </span>
+
                 </div>
 
                 <button
@@ -774,6 +992,7 @@ Explain clearly and simply.
             )}
 
             {/* LOADING */}
+
             {loading && (
               <div className="py-10 px-6 rounded-3xl bg-slate-950/70 border border-blue-500/30 flex flex-col items-center justify-center gap-4">
 
@@ -806,10 +1025,12 @@ Explain clearly and simply.
             {/* =================================================
                 LIVE SOLUTION
             ================================================= */}
+
             {solution && !loading && (
               <div className="space-y-5 animate-in slide-in-from-bottom-3 duration-400">
 
                 {/* FINAL ANSWER */}
+
                 <div className="bg-gradient-to-r from-emerald-950/60 to-slate-900 border border-emerald-500/30 rounded-3xl p-6 shadow-xl relative overflow-hidden">
 
                   <div className="flex items-center justify-between mb-2">
@@ -854,12 +1075,29 @@ Explain clearly and simply.
                   </div>
 
                   <div className="text-white text-2xl md:text-3xl font-mono font-bold tracking-tight break-words py-1">
-                    {solution.answer}
+                    {cleanMathText(
+                      solution.answer
+                    )}
                   </div>
 
                 </div>
 
+                {/* PROBLEM */}
+
+                <div className="bg-slate-950/70 rounded-2xl p-4 border border-slate-800/80">
+
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Problem
+                  </span>
+
+                  <p className="text-sm text-slate-200 font-mono mt-1 whitespace-pre-wrap">
+                    {problemInput}
+                  </p>
+
+                </div>
+
                 {/* METHOD */}
+
                 {solution.method && (
                   <div className="bg-slate-950/70 rounded-2xl p-4 border border-slate-800/80 flex items-center gap-3">
 
@@ -870,7 +1108,7 @@ Explain clearly and simply.
                     <div>
 
                       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                        Method / Formula:
+                        Method / Formula
                       </span>
 
                       <p className="text-sm font-semibold text-slate-200">
@@ -883,6 +1121,7 @@ Explain clearly and simply.
                 )}
 
                 {/* STEPS */}
+
                 {solution.steps &&
                   solution.steps.length > 0 && (
                     <div className="space-y-3">
@@ -901,12 +1140,12 @@ Explain clearly and simply.
                               className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/70 flex items-start gap-3.5"
                             >
 
-                              <span className="w-6 h-6 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center text-xs font-bold font-mono shrink-0 mt-0.5">
+                              <span className="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center text-xs font-bold font-mono shrink-0 mt-0.5">
                                 {index + 1}
                               </span>
 
-                              <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap font-mono">
-                                {step}
+                              <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap font-mono flex-1">
+                                {cleanStep(step)}
                               </p>
 
                             </div>
@@ -919,22 +1158,29 @@ Explain clearly and simply.
                   )}
 
                 {/* EXPLANATION */}
+
                 {solution.explanation && (
                   <div className="bg-slate-800/30 rounded-2xl p-5 border border-slate-800/60">
 
                     <h4 className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2 flex items-center gap-2">
+
                       <i className="fas fa-info-circle text-indigo-400"></i>
+
                       Insight & Verification
+
                     </h4>
 
-                    <p className="text-slate-300 text-sm leading-relaxed">
-                      {solution.explanation}
+                    <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">
+                      {cleanMathText(
+                        solution.explanation
+                      )}
                     </p>
 
                   </div>
                 )}
 
                 {/* FOLLOW-UP */}
+
                 <form
                   onSubmit={
                     handleFollowUp
@@ -971,6 +1217,7 @@ Explain clearly and simply.
             )}
 
             {/* DEFAULT STATE */}
+
             {!solution && !loading && (
               <div className="space-y-4 pt-2">
 
@@ -1015,8 +1262,11 @@ Explain clearly and simply.
                 <div className="bg-slate-950/40 rounded-2xl p-5 border border-slate-800/60">
 
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2">
+
                     <i className="fas fa-sparkles text-amber-400"></i>
+
                     Supported Mathematical Domains
+
                   </h4>
 
                   <div className="grid grid-cols-2 gap-2.5">
@@ -1038,6 +1288,7 @@ Explain clearly and simply.
                       <p className="text-[11px] text-slate-500 mt-0.5">
                         Quadratic, polynomials, roots
                       </p>
+
                     </button>
 
                     <button
@@ -1057,6 +1308,7 @@ Explain clearly and simply.
                       <p className="text-[11px] text-slate-500 mt-0.5">
                         Derivatives, integrals, limits
                       </p>
+
                     </button>
 
                     <button
@@ -1076,6 +1328,7 @@ Explain clearly and simply.
                       <p className="text-[11px] text-slate-500 mt-0.5">
                         Simultaneous linear equations
                       </p>
+
                     </button>
 
                     <button
@@ -1095,6 +1348,7 @@ Explain clearly and simply.
                       <p className="text-[11px] text-slate-500 mt-0.5">
                         Combinatorics, distributions
                       </p>
+
                     </button>
 
                   </div>
@@ -1107,9 +1361,10 @@ Explain clearly and simply.
           </div>
         )}
 
-        {/* ===================================================
+        {/* =================================================
             CALC LOGIC TAB
-        =================================================== */}
+        ================================================= */}
+
         {activeTab === 'explain' && (
           <div className="flex flex-col gap-5 animate-in fade-in duration-300">
 
@@ -1121,7 +1376,7 @@ Explain clearly and simply.
                     Current Problem
                   </span>
 
-                  <p className="text-slate-200 text-sm md:text-base mt-2 font-mono">
+                  <p className="text-slate-200 text-sm md:text-base mt-2 font-mono whitespace-pre-wrap">
                     {problemInput}
                   </p>
 
@@ -1148,8 +1403,11 @@ Explain clearly and simply.
                 <div className="space-y-3">
 
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+
                     <i className="fas fa-list-ol text-blue-400"></i>
+
                     Step-by-Step Logic
+
                   </h4>
 
                   {solution.steps?.map(
@@ -1163,8 +1421,8 @@ Explain clearly and simply.
                           {index + 1}
                         </span>
 
-                        <p className="text-slate-300 text-sm leading-relaxed font-mono whitespace-pre-wrap">
-                          {step}
+                        <p className="text-slate-300 text-sm leading-relaxed font-mono whitespace-pre-wrap flex-1">
+                          {cleanStep(step)}
                         </p>
 
                       </div>
@@ -1177,12 +1435,17 @@ Explain clearly and simply.
                   <div className="bg-slate-800/30 rounded-2xl p-5 border border-slate-800/60">
 
                     <h4 className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2 flex items-center gap-2">
+
                       <i className="fas fa-lightbulb text-amber-400"></i>
+
                       Explanation
+
                     </h4>
 
-                    <p className="text-slate-300 text-sm leading-relaxed">
-                      {solution.explanation}
+                    <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">
+                      {cleanMathText(
+                        solution.explanation
+                      )}
                     </p>
 
                   </div>
@@ -1221,8 +1484,11 @@ Explain clearly and simply.
                       }
                       className="px-5 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold disabled:opacity-50"
                     >
+
                       <i className="fas fa-paper-plane mr-1.5"></i>
+
                       Ask
+
                     </button>
 
                   </form>
@@ -1253,9 +1519,10 @@ Explain clearly and simply.
           </div>
         )}
 
-        {/* ===================================================
+        {/* =================================================
             HISTORY TAB
-        =================================================== */}
+        ================================================= */}
+
         {activeTab === 'history' && (
           <div className="flex flex-col gap-4 animate-in fade-in duration-300">
 
@@ -1283,7 +1550,8 @@ Explain clearly and simply.
               </button>
 
               <span className="text-[11px] text-slate-500 uppercase font-mono">
-                {displayedHistory.length} saved
+                {displayedHistory.length}{' '}
+                saved
               </span>
 
             </div>
@@ -1348,6 +1616,7 @@ Explain clearly and simply.
                               : 'text-slate-700 hover:text-amber-400'
                           }`}
                         >
+
                           <i
                             className={`fa-star ${
                               item.isStarred
@@ -1355,6 +1624,7 @@ Explain clearly and simply.
                                 : 'far'
                             }`}
                           ></i>
+
                         </button>
 
                         <button
@@ -1366,7 +1636,9 @@ Explain clearly and simply.
                           }
                           className="text-slate-700 hover:text-red-400 transition-all hover:scale-125 text-sm"
                         >
+
                           <i className="fas fa-trash-alt"></i>
+
                         </button>
 
                       </div>
