@@ -1,11 +1,18 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
 
-const apiKey = process.env.GEMINI_API_KEY;
+const apiKey1 = process.env.GEMINI_API_KEY;
+const apiKey2 = process.env.GEMINI_API_KEY_2;
 
-const ai = apiKey
+const ai1 = apiKey1
   ? new GoogleGenAI({
-      apiKey,
+      apiKey: apiKey1,
+    })
+  : null;
+
+const ai2 = apiKey2
+  ? new GoogleGenAI({
+      apiKey: apiKey2,
     })
   : null;
 
@@ -135,7 +142,7 @@ export default async function handler(
     ) {
       return res.status(200).json({
         status: 'ok',
-        aiConfigured: !!apiKey,
+        aiConfigured: !!(apiKey1 || apiKey2),
       });
     }
 
@@ -146,11 +153,11 @@ export default async function handler(
       req.method === 'POST' &&
       req.url?.split('?')[0] === '/api/solve'
     ) {
-      if (!ai) {
-        return res.status(500).json({
-          error: 'Gemini API key is not configured.',
-        });
-      }
+      if (!ai1 && !ai2) {
+  return res.status(500).json({
+    error: 'Gemini API keys are not configured.',
+  });
+}
 
       const { problem, context } = req.body || {};
 
@@ -243,10 +250,53 @@ Make sure the JSON is valid.
 Do not add anything before or after the JSON.
 `;
 
-      const response = await ai.models.generateContent({
+      let response;
+
+try {
+  if (ai1) {
+    response = await ai1.models.generateContent({
+      model: 'gemini-3.6-flash',
+      contents: prompt,
+    });
+  } else if (ai2) {
+    response = await ai2.models.generateContent({
+      model: 'gemini-3.6-flash',
+      contents: prompt,
+    });
+  }
+} catch (error: any) {
+  const status = error?.status || error?.error?.code;
+
+  // If the first Gemini project has reached its quota,
+  // automatically try the second Gemini project.
+  if (status === 429 && ai2) {
+    console.warn(
+      'Primary Gemini API quota exceeded. Trying secondary API key...'
+    );
+
+    try {
+      response = await ai2.models.generateContent({
         model: 'gemini-3.6-flash',
         contents: prompt,
       });
+    } catch (secondaryError) {
+      console.error(
+        'Secondary Gemini API also failed:',
+        secondaryError
+      );
+
+      throw secondaryError;
+    }
+  } else {
+    throw error;
+  }
+}
+
+if (!response) {
+  return res.status(500).json({
+    error: 'Gemini API did not return a response.',
+  });
+}
 
       const rawText =
         typeof response.text === 'string'
