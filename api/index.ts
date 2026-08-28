@@ -1,14 +1,16 @@
 import { GoogleGenAI } from "@google/genai";
 
 export default async function handler(req: any, res: any) {
-  if (req.method === "GET" && req.url === "/api/health") {
+  // Health check
+  if (req.method === "GET") {
     return res.status(200).json({
       status: "ok",
       aiConfigured: Boolean(process.env.GEMINI_API_KEY),
     });
   }
 
-  if (req.method === "POST" && req.url === "/api/solve") {
+  // AI Solver
+  if (req.method === "POST") {
     try {
       const { problem } = req.body || {};
 
@@ -35,12 +37,14 @@ export default async function handler(req: any, res: any) {
 ${problem}`,
       });
 
+      const answer = response.text || "No answer returned.";
+
       return res.status(200).json({
         problemStatement: problem,
         method: "AI Mathematical Analysis",
-        steps: [response.text || "No explanation returned."],
-        answer: response.text || "No answer returned.",
-        explanation: response.text || "",
+        steps: [answer],
+        answer,
+        explanation: answer,
       });
     } catch (error: any) {
       console.error("Solve error:", error);
@@ -51,7 +55,7 @@ ${problem}`,
     }
   }
 
-  return res.status(404).json({
-    error: "API route not found",
+  return res.status(405).json({
+    error: "Method not allowed",
   });
 }
