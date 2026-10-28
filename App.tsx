@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 // Remove .tsx and .ts extensions from relative imports
 import { Calculator } from './components/Calculator';
 import { Sidebar } from './components/Sidebar';
@@ -201,66 +202,79 @@ const App: React.FC = () => {
             setView('workspace');
           }}
         />
+        <Analytics />
       </>
     );
   }
 
   if (view === 'settings') {
     return (
-      <Settings 
-        settings={settings} 
-        onUpdate={(s) => setSettings(prev => ({...prev, ...s}))} 
-        onClearHistory={clearAllStoredData}
-        onBack={() => setView('launchpad')} 
-      />
+      <>
+        <Settings 
+          settings={settings} 
+          onUpdate={(s) => setSettings(prev => ({...prev, ...s}))} 
+          onClearHistory={clearAllStoredData}
+          onBack={() => setView('launchpad')} 
+        />
+        <Analytics />
+      </>
     );
   }
 
   if (view === 'notes') {
     return (
-      <WorkspaceWrapper title="Gemini Notes" icon="fa-sticky-note">
-        <NotesApp />
-      </WorkspaceWrapper>
+      <>
+        <WorkspaceWrapper title="Gemini Notes" icon="fa-sticky-note">
+          <NotesApp />
+        </WorkspaceWrapper>
+        <Analytics />
+      </>
     );
   }
 
   if (view === 'formulas') {
     return (
-      <WorkspaceWrapper title="Formula Lab" icon="fa-flask">
-        <FormulaLab onSelectFormula={(expr) => {
-          setDisplay(expr);
-          setView('workspace');
-        }} />
-      </WorkspaceWrapper>
+      <>
+        <WorkspaceWrapper title="Formula Lab" icon="fa-flask">
+          <FormulaLab onSelectFormula={(expr) => {
+            setDisplay(expr);
+            setView('workspace');
+          }} />
+        </WorkspaceWrapper>
+        <Analytics />
+      </>
     );
   }
 
   return (
-    <WorkspaceWrapper 
-      title="Gemini Calc-Pro" 
-      icon="fa-calculator"
-      onClear={solverHistory.length > 0 ? () => {
-        setSolverHistory([]);
-        localStorage.removeItem('calc_solver_history');
-      } : undefined}
-    >
-      <div className="flex-1 flex flex-col items-center justify-start p-4 md:p-12 relative overflow-y-auto custom-scrollbar h-full">
-        <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
-          <div className="lg:col-span-5 flex flex-col gap-6">
-            <Calculator display={display} setDisplay={setDisplay} onCalculate={handleCalculate} />
-          </div>
-          <div className="lg:col-span-7 h-full">
-            <AiAssistant 
-              currentDisplay={display} 
-              history={history} 
-              solverHistory={solverHistory}
-              onUpdateSolverHistory={setSolverHistory}
-              initialPrompt={initialAiPrompt}
-            />
+    <>
+      <WorkspaceWrapper 
+        title="Gemini Calc-Pro" 
+        icon="fa-calculator"
+        onClear={solverHistory.length > 0 ? () => {
+          setSolverHistory([]);
+          localStorage.removeItem('calc_solver_history');
+        } : undefined}
+      >
+        <div className="flex-1 flex flex-col items-center justify-start p-4 md:p-12 relative overflow-y-auto custom-scrollbar h-full">
+          <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
+            <div className="lg:col-span-5 flex flex-col gap-6">
+              <Calculator display={display} setDisplay={setDisplay} onCalculate={handleCalculate} />
+            </div>
+            <div className="lg:col-span-7 h-full">
+              <AiAssistant 
+                currentDisplay={display} 
+                history={history} 
+                solverHistory={solverHistory}
+                onUpdateSolverHistory={setSolverHistory}
+                initialPrompt={initialAiPrompt}
+              />
+            </div>
           </div>
         </div>
-      </div>
-    </WorkspaceWrapper>
+      </WorkspaceWrapper>
+      <Analytics />
+    </>
   );
 };
 
